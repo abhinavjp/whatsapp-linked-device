@@ -1,21 +1,27 @@
-const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion } = require('@whiskeysockets/baileys');
 const WebSocket = require('ws');
 const pino = require('pino');
 const path = require('path');
 
 const wss = new WebSocket.Server({ port: 3000 });
+const clients = new Set();
+let sock = null;
+let currentQr = null;
+let currentStatus = 'disconnected';
 
-wss.on('connection', async (ws) => {
-    console.log('Backend connected to WhatsApp microservice');
-    
-    // Auth state is stored in the project-wide whatsapp-sessions directory
+async function connectToWhatsApp() {
+    console.log('Starting WhatsApp connection...');
     const sessionsDir = path.join(__dirname, '..', 'whatsapp-sessions');
     const { state, saveCreds } = await useMultiFileAuthState(sessionsDir);
+    const { version, isLatest } = await fetchLatestWaWebVersion();
+    console.log(`Using WA v${version.join('.')}, isLatest: ${isLatest}`);
     
-    const sock = makeWASocket({
+    sock = makeWASocket({
+        version,
         auth: state,
-        printQRInTerminal: true,
-        logger: pino({ level: 'silent' })
+        logger: pino({ level: 'info' }),
+        browser: ['Ubuntu', 'Chrome', '10.0.0'],
+        printQRInTerminal: false
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -25,27 +31,60 @@ wss.on('connection', async (ws) => {
         
         if (qr) {
             console.log('New QR code generated');
-            ws.send(JSON.stringify({ type: 'qr', data: qr }));
+            currentQr = qr;
+            broadcast({ type: 'qr', data: qr });
         }
         
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Connection closed. Reconnecting:', shouldReconnect);
-            ws.send(JSON.stringify({ type: 'status', data: 'disconnected' }));
+            console.log('Connection closed. Reason:', lastDisconnect?.error?.message || lastDisconnect?.error);
+            console.log('Reconnecting:', shouldReconnect);
+            currentStatus = 'disconnected';
+            currentQr = null;
+            broadcast({ type: 'status', data: 'disconnected' });
             
             if (shouldReconnect) {
-                // Reconnection logic could be added here, but for now we let the next connection attempt trigger it
+                console.log('Restarting WhatsApp connection in 2 seconds...');
+                setTimeout(connectToWhatsApp, 2000);
             }
         } else if (connection === 'open') {
             console.log('WhatsApp connection opened successfully');
-            ws.send(JSON.stringify({ type: 'status', data: 'connected' }));
+            currentStatus = 'connected';
+            currentQr = null;
+            broadcast({ type: 'status', data: 'connected' });
         }
     });
+}
 
+function broadcast(msg) {
+    const msgStr = JSON.stringify(msg);
+    for (const client of clients) {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(msgStr);
+        }
+    }
+}
+
+wss.on('connection', (ws) => {
+    console.log('Backend connected to WhatsApp microservice');
+    clients.add(ws);
+    
+    // Send the current state to the newly connected frontend
+    if (currentStatus === 'connected') {
+        ws.send(JSON.stringify({ type: 'status', data: 'connected' }));
+    } else if (currentQr) {
+        ws.send(JSON.stringify({ type: 'qr', data: currentQr }));
+    } else {
+        ws.send(JSON.stringify({ type: 'status', data: 'disconnected' }));
+    }
+    
     ws.on('close', () => {
         console.log('Backend disconnected');
-        // We don't close the WhatsApp socket here to allow it to stay connected in the background
+        clients.delete(ws);
     });
 });
 
 console.log('WhatsApp Microservice started on port 3000.');
+
+// Initialize the WhatsApp connection loop on startup
+connectToWhatsApp();
