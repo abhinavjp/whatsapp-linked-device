@@ -1,0 +1,32 @@
+<div class="dashboard-container">
+  <div class="header">
+    <h1 class="header-title">
+      <div class="status-indicator" [class.connected]="isConnected"></div>
+      Native MD Gateway
+    </h1>
+    <div>
+      <button class="btn btn-primary" *ngIf="!isConnected" (click)="connect()">Connect to .NET Store</button>
+      <button class="btn btn-danger" *ngIf="isConnected" (click)="disconnect()">Disconnect</button>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <div class="qr-section">
+      <div *ngIf="qrData" class="qr-wrapper">
+        <qrcode [qrdata]="qrData" [width]="264" [errorCorrectionLevel]="'M'"></qrcode>
+      </div>
+      <div *ngIf="!qrData" class="qr-placeholder">
+        <span *ngIf="!isConnected">Disconnected.<br><br>Establish a WebSocket connection to the .NET 4.7.2 backend to initiate the Noise Handshake.</span>
+        <span *ngIf="isConnected">Connected.<br><br>Negotiating cryptographic keys...</span>
+      </div>
+    </div>
+
+    <div class="logs-section">
+      <div class="logs-header">Session & State Logs</div>
+      <div class="logs-container">
+        <div class="log-entry" *ngFor="let log of logs">{{ log }}</div>
+        <div class="log-entry" *ngIf="logs.length === 0" style="border-left-color: transparent;">No activity...</div>
+      </div>
+    </div>
+  </div>
+</div>
