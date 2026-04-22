@@ -1,54 +1,114 @@
 using System;
 using System.Net.WebSockets;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Backend.Protocol
 {
     /// <summary>
-    /// Serves as the entry point for the WhatsApp Multi-Device (MD) protocol.
-    /// Handles the Noise protocol handshake, Curve25519 cryptography,
-    /// and Protobuf serialization over WebSockets.
+    /// Proxies messages between the Angular frontend and the Node.js WhatsApp microservice.
+    /// This implementation follows the Proxy/Gateway pattern to ensure the .NET backend
+    /// remains the sole public interface while delegating protocol complexity to Node.js.
     /// </summary>
     public class WhatsAppProtocolWrapper
     {
-        private readonly WebSocket _webSocket;
-        private bool _handshakeComplete = false;
+        private readonly WebSocket _frontendSocket;
+        private readonly ClientWebSocket _nodeSocket;
+        private readonly CancellationTokenSource _cts = new CancellationTokenSource();
 
-        public WhatsAppProtocolWrapper(WebSocket webSocket)
+        public WhatsAppProtocolWrapper(WebSocket frontendSocket)
         {
-            _webSocket = webSocket ?? throw new ArgumentNullException(nameof(webSocket));
+            _frontendSocket = frontendSocket ?? throw new ArgumentNullException(nameof(frontendSocket));
+            _nodeSocket = new ClientWebSocket();
         }
 
-        public async Task StartHandshakeAsync()
+        /// <summary>
+        /// Starts the proxy session, bridging the two WebSockets.
+        /// </summary>
+        public async Task StartProxyAsync()
         {
-            // Simulate the start of the Noise Handshake.
-            // For a full implementation, we'd generate Ephemeral keys here and send the first Noise prologue payload.
-            
-            Console.WriteLine("[WhatsAppProtocolWrapper] Initiating Noise Handshake...");
-            var mockInitialPayload = Encoding.UTF8.GetBytes("{\"type\":\"init_handshake\",\"status\":\"started\"}");
-            await _webSocket.SendAsync(new ArraySegment<byte>(mockInitialPayload), WebSocketMessageType.Text, true, CancellationToken.None);
-            
-            _handshakeComplete = true; // Simplified for scaffolding
-        }
-
-        public async Task HandleIncomingMessageAsync(byte[] buffer, int count, WebSocketMessageType messageType)
-        {
-            if (!_handshakeComplete)
+            try
             {
-                Console.WriteLine("[WhatsAppProtocolWrapper] Received data before handshake completion.");
-                return;
+                // Connect to the local Node.js microservice
+                await _nodeSocket.ConnectAsync(new Uri("ws://localhost:3000"), CancellationToken.None);
+                Console.WriteLine("[WhatsAppProtocolWrapper] Connected to Node.js microservice.");
+
+                // Start two concurrent loops: one for each direction of traffic
+                var nodeToFrontTask = ProxyNodeToFrontend();
+                var frontToNodeTask = ProxyFrontendToNode();
+
+                // Wait for either connection to close
+                await Task.WhenAny(nodeToFrontTask, frontToNodeTask);
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[WhatsAppProtocolWrapper] Proxy Error: {ex.Message}");
+            }
+            finally
+            {
+                _cts.Cancel();
+                await CleanupSockets();
+            }
+        }
 
-            var message = Encoding.UTF8.GetString(buffer, 0, count);
-            Console.WriteLine($"[WhatsAppProtocolWrapper] Received: {message}");
+        private async Task ProxyNodeToFrontend()
+        {
+            var buffer = new byte[8192];
+            try
+            {
+                while (_nodeSocket.State == WebSocketState.Open && !_cts.Token.IsCancellationRequested)
+                {
+                    var result = await _nodeSocket.ReceiveAsync(new ArraySegment<byte>(buffer), _cts.Token);
+                    
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        Console.WriteLine("[WhatsAppProtocolWrapper] Node.js closed connection.");
+                        break;
+                    }
 
-            // Send back a mock QR Code payload for the Angular UI to display
-            var qrResponse = "{\"type\":\"qr_code\",\"data\":\"1@mock_qr_data_representing_public_key_and_signature==\"}";
-            var responseBytes = Encoding.UTF8.GetBytes(qrResponse);
+                    if (_frontendSocket.State == WebSocketState.Open)
+                    {
+                        await _frontendSocket.SendAsync(new ArraySegment<byte>(buffer, 0, result.Count), result.MessageType, result.EndOfMessage, _cts.Token);
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+        }
+
+        private async Task ProxyFrontendToNode()
+        {
+            var buffer = new byte[8192];
+            try
+            {
+                while (_frontendSocket.State == WebSocketState.Open && !_cts.Token.IsCancellationRequested)
+                {
+                    var result = await _frontendSocket.ReceiveAsync(new ArraySegment<byte>(buffer), _cts.Token);
+                    
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        Console.WriteLine("[WhatsAppProtocolWrapper] Frontend closed connection.");
+                        break;
+                    }
+
+                    if (_nodeSocket.State == WebSocketState.Open)
+                    {
+                        await _nodeSocket.SendAsync(new ArraySegment<byte>(buffer, 0, result.Count), result.MessageType, result.EndOfMessage, _cts.Token);
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+        }
+
+        private async Task CleanupSockets()
+        {
+            if (_nodeSocket.State == WebSocketState.Open)
+                await _nodeSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
             
-            await _webSocket.SendAsync(new ArraySegment<byte>(responseBytes), WebSocketMessageType.Text, true, CancellationToken.None);
+            if (_frontendSocket.State == WebSocketState.Open)
+                await _frontendSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
+            
+            _nodeSocket.Dispose();
+            _cts.Dispose();
         }
     }
 }
