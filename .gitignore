@@ -2,3 +2,4 @@ bin/
 obj/
 .vs/
 !whatsapp-sessions/
+node_modules/
