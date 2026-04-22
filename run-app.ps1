@@ -37,6 +37,11 @@ try {
     npm install
     Check-LastExitCode
 
+    Write-Step "Restoring WhatsApp Node Service packages..."
+    Set-Location "$root/whatsapp-service"
+    npm install
+    Check-LastExitCode
+
     # 2. Build (if requested)
     if ($Build -or $Check) {
         Write-Step "Building Backend..."
@@ -73,8 +78,11 @@ try {
         
         Write-Host "Opening Frontend in new window..." -ForegroundColor Gray
         Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root/frontend'; Write-Host '--- Frontend Dev Server ---' -ForegroundColor Cyan; npm start"
+
+        Write-Host "Opening WhatsApp Node Service in new window..." -ForegroundColor Gray
+        Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root/whatsapp-service'; Write-Host '--- WhatsApp Node Service ---' -ForegroundColor Cyan; node index.js"
         
-        Write-Success "Both applications are launching in separate windows."
+        Write-Success "All applications (Backend, Frontend, Node Service) are launching in separate windows."
     } else {
         Write-Success "Operation completed successfully."
     }
