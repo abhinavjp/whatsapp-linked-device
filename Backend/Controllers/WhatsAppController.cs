@@ -5,6 +5,12 @@ using System.Text;
 
 namespace Backend.Controllers
 {
+    public class MessagePayload
+    {
+        public string to { get; set; }
+        public string text { get; set; }
+    }
+
     /// <summary>
     /// API Controller that proxies WhatsApp commands to the Node.js microservice.
     /// This ensures the frontend only talks to the .NET gateway.
@@ -20,7 +26,7 @@ namespace Backend.Controllers
         /// </summary>
         [HttpPost]
         [Route("send")]
-        public async Task<IHttpActionResult> SendMessage([FromBody] dynamic payload)
+        public async Task<IHttpActionResult> SendMessage([FromBody] MessagePayload payload)
         {
             var content = new StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
             var response = await _httpClient.PostAsync($"{NodeBaseUrl}/send-message", content);
