@@ -1,8 +1,8 @@
 import { Injectable } from '@angular/core';
 import { webSocket, WebSocketSubject } from 'rxjs/webSocket';
-import { Subject, BehaviorSubject, Observable, timer } from 'rxjs';
+import { Subject, BehaviorSubject, Observable, timer, EMPTY } from 'rxjs';
 import { HttpClient } from '@angular/common/http';
-import { retry, delay, tap, catchError } from 'rxjs/operators';
+import { retry, delay, tap, catchError, switchMap } from 'rxjs/operators';
 
 /**
  * Message structure for communication between Frontend and Backend.
@@ -50,11 +50,11 @@ export class ConnectionService {
           this.isConnected$.next(false);
           // Auto-reconnect after 3 seconds
           return timer(3000).pipe(
-            tap(() => {
+            switchMap(() => {
                 console.log('Attempting to reconnect...');
                 this.connect();
-            }),
-            catchError(() => new Observable<WhatsAppMessage>())
+                return EMPTY;
+            })
           );
         })
       ).subscribe({
