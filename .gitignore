@@ -1,5 +1,6 @@
 bin/
 obj/
 .vs/
-!whatsapp-sessions/
+whatsapp-sessions/
 node_modules/
+*.log

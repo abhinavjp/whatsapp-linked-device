@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ConnectionService } from './services/connection.service';
@@ -48,7 +48,7 @@ export class AppComponent implements OnInit, OnDestroy {
   
   private subs = new Subscription();
 
-  constructor(private connectionService: ConnectionService) {}
+  constructor(private connectionService: ConnectionService, private cdr: ChangeDetectorRef) {}
 
   /**
    * Initializes the component and sets up subscriptions.
@@ -134,15 +134,19 @@ export class AppComponent implements OnInit, OnDestroy {
     this.isSending = true;
     
     this.connectionService.sendNotification(this.phoneNumber, this.messageText).subscribe({
-      next: () => {
+      next: (response) => {
+        console.log('[AppComponent] Notification success response received:', response);
         newMessage.status = 'Sent ✅';
         this.isSending = false;
         this.messageText = '';
+        this.cdr.detectChanges(); // Force UI update
       },
       error: (err) => {
+        console.error('[AppComponent] Notification error received:', err);
         newMessage.status = 'Failed ❌';
         newMessage.error = err.error?.error || err.message;
         this.isSending = false;
+        this.cdr.detectChanges(); // Force UI update
       }
     });
   }

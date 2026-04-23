@@ -8,9 +8,19 @@ const fs = require('fs');
 
 const wss = new WebSocket.Server({ port: 3000 });
 const clients = new Set();
+const logFilePath = path.join(__dirname, '..', 'whatsapp-service.log');
+function logToFile(msg) {
+    const timestamp = new Date().toISOString();
+    const formattedMsg = `[${timestamp}] ${msg}\n`;
+    fs.appendFileSync(logFilePath, formattedMsg);
+    console.log(msg);
+}
+
 let sock = null;
 let currentQr = null;
 let currentStatus = 'disconnected';
+
+logToFile('WhatsApp Microservice starting...');
 
 async function connectToWhatsApp() {
     console.log('Starting WhatsApp connection...');
@@ -33,25 +43,25 @@ async function connectToWhatsApp() {
         const { connection, lastDisconnect, qr } = update;
         
         if (qr) {
-            console.log('New QR code generated');
+            logToFile('New QR code generated');
             currentQr = qr;
             broadcast({ type: 'qr', data: qr });
         }
         
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Connection closed. Reason:', lastDisconnect?.error?.message || lastDisconnect?.error);
-            console.log('Reconnecting:', shouldReconnect);
+            logToFile(`Connection closed. Reason: ${lastDisconnect?.error?.message || lastDisconnect?.error}`);
+            logToFile(`Should reconnect: ${shouldReconnect}`);
             currentStatus = 'disconnected';
             currentQr = null;
             broadcast({ type: 'status', data: 'disconnected' });
             
             if (shouldReconnect) {
-                console.log('Restarting WhatsApp connection in 2 seconds...');
+                logToFile('Restarting WhatsApp connection in 2 seconds...');
                 setTimeout(connectToWhatsApp, 2000);
             }
         } else if (connection === 'open') {
-            console.log('WhatsApp connection opened successfully');
+            logToFile('WhatsApp connection opened successfully');
             currentStatus = 'connected';
             currentQr = null;
             broadcast({ type: 'status', data: 'connected' });
@@ -93,16 +103,29 @@ app.use(express.json());
 
 app.post('/api/send-message', async (req, res) => {
     const { to, text } = req.body;
+    const jid = to.includes('@s.whatsapp.net') ? to : `${to}@s.whatsapp.net`;
+    logToFile(`[HTTP] Received request to send message to ${jid}`);
+
     if (!sock || currentStatus !== 'connected') {
+        logToFile(`[HTTP] Failed: WhatsApp not connected (Status: ${currentStatus})`);
         return res.status(400).json({ error: 'WhatsApp not connected' });
     }
+
     try {
-        const jid = to.includes('@s.whatsapp.net') ? to : `${to}@s.whatsapp.net`;
-        await sock.sendMessage(jid, { text });
-        console.log(`[HTTP] Sent message to ${jid}`);
+        logToFile(`[HTTP] Calling Baileys sendMessage to ${jid}...`);
+        
+        // Add a timeout to ensure we don't hang the HTTP request forever
+        const sendPromise = sock.sendMessage(jid, { text });
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Baileys sendMessage timeout')), 15000)
+        );
+
+        const result = await Promise.race([sendPromise, timeoutPromise]);
+        
+        logToFile(`[HTTP] Baileys reported success for ${jid}. Result: ${JSON.stringify(result)}`);
         res.status(200).json({ success: true });
     } catch (err) {
-        console.error('[HTTP] Send failed:', err.message);
+        logToFile(`[HTTP] Send failed for ${jid}: ${err.message}`);
         res.status(500).json({ error: err.message });
     }
 });

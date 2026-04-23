@@ -2,7 +2,7 @@ import { Injectable } from '@angular/core';
 import { webSocket, WebSocketSubject } from 'rxjs/webSocket';
 import { Subject, BehaviorSubject, Observable, timer, EMPTY } from 'rxjs';
 import { HttpClient } from '@angular/common/http';
-import { retry, delay, tap, catchError, switchMap } from 'rxjs/operators';
+import { retry, delay, tap, catchError, switchMap, timeout } from 'rxjs/operators';
 
 /**
  * Message structure for communication between Frontend and Backend.
@@ -88,7 +88,15 @@ export class ConnectionService {
    * Sends a WhatsApp message via the .NET REST Proxy.
    */
   public sendNotification(to: string, text: string): Observable<any> {
-    return this.http.post(`${this.apiUrl}/send`, { to, text });
+    return this.http.post(`${this.apiUrl}/send`, { to, text }).pipe(
+      // Use RxJS timeout to prevent UI hang if the proxy or microservice hangs
+      timeout(15000),
+      tap(() => console.log('Message sent successfully via proxy')),
+      catchError(err => {
+        console.error('Send Notification Error:', err);
+        throw err;
+      })
+    );
   }
 
   /**
