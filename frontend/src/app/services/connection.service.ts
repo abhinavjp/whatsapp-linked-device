@@ -1,6 +1,8 @@
 import { Injectable } from '@angular/core';
 import { webSocket, WebSocketSubject } from 'rxjs/webSocket';
-import { Subject, BehaviorSubject } from 'rxjs';
+import { Subject, BehaviorSubject, Observable, timer } from 'rxjs';
+import { HttpClient } from '@angular/common/http';
+import { retry, delay, tap, catchError } from 'rxjs/operators';
 
 /**
  * Message structure for communication between Frontend and Backend.
@@ -21,7 +23,10 @@ export interface WhatsAppMessage {
 })
 export class ConnectionService {
   private socket$: WebSocketSubject<WhatsAppMessage> | null = null;
+  private readonly apiUrl = 'http://localhost:9000/api/whatsapp';
   
+  constructor(private http: HttpClient) {}
+
   /** Stream of all raw messages */
   public messages$ = new Subject<WhatsAppMessage>();
   
@@ -38,11 +43,24 @@ export class ConnectionService {
     if (!this.socket$ || this.socket$.closed) {
       this.socket$ = webSocket('ws://localhost:9000/ws/whatsapp');
       
-      this.socket$.subscribe({
+      this.socket$.pipe(
+        tap(() => console.log('WebSocket message received')),
+        catchError(err => {
+          console.error('WebSocket Error:', err);
+          this.isConnected$.next(false);
+          // Auto-reconnect after 3 seconds
+          return timer(3000).pipe(
+            tap(() => {
+                console.log('Attempting to reconnect...');
+                this.connect();
+            }),
+            catchError(() => new Observable<WhatsAppMessage>())
+          );
+        })
+      ).subscribe({
         next: (msg) => {
           this.messages$.next(msg);
           
-          // Handle specific message types from the Node.js microservice (proxied through .NET)
           if (msg.type === 'qr' && msg.data) {
             this.qr$.next(msg.data);
           } else if (msg.type === 'status') {
@@ -50,11 +68,12 @@ export class ConnectionService {
               this.isConnected$.next(true);
             } else if (msg.data === 'disconnected') {
               this.isConnected$.next(false);
+              this.qr$.next('');
             }
           }
         },
         error: (err) => {
-          console.error('WebSocket Error:', err);
+          console.error('WebSocket Subscription Error:', err);
           this.isConnected$.next(false);
         },
         complete: () => {
@@ -63,6 +82,27 @@ export class ConnectionService {
         }
       });
     }
+  }
+
+  /**
+   * Sends a WhatsApp message via the .NET REST Proxy.
+   */
+  public sendNotification(to: string, text: string): Observable<any> {
+    return this.http.post(`${this.apiUrl}/send`, { to, text });
+  }
+
+  /**
+   * Disconnects the active session.
+   */
+  public disconnectSession(): Observable<any> {
+    return this.http.post(`${this.apiUrl}/disconnect`, {});
+  }
+
+  /**
+   * Reconnects (wipes session and starts fresh).
+   */
+  public reconnectSession(): Observable<any> {
+    return this.http.post(`${this.apiUrl}/reconnect`, {});
   }
 
   /**
